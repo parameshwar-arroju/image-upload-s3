@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { env } from "@/env";
 import { v4 as uuidv4 } from "uuid";
@@ -12,7 +12,42 @@ const s3Client = new S3Client({
   },
 });
 
-async function uploadFileToS3(file: Buffer, fileName: any) {
+export async function POST(request: NextRequest) {
+  try {
+    const formData = await request.formData();
+    const file = formData.get("file");
+    const imageId = formData.get("imageId");
+
+    if (!file || !(file instanceof File)) {
+      return NextResponse.json(
+        { error: "File is required and must be a valid file." },
+        { status: 400 },
+      );
+    }
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const fileName = await uploadFileToS3(buffer, file.name);
+
+    const image = await db.images.update({
+      where: {
+        id: imageId as string,
+      },
+      data: {
+        imageUrl: `https://uploadimgs3.s3.ap-south-1.amazonaws.com/${fileName}`,
+      },
+    });
+
+    if (!image) {
+      throw new Error("Failed to upload image");
+    }
+
+    return NextResponse.json({ success: true, fileName });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+async function uploadFileToS3(file: Buffer, fileName: string) {
   const fileBuffer = file;
 
   const ext = fileName.split(".").at(-1);
@@ -29,36 +64,4 @@ async function uploadFileToS3(file: Buffer, fileName: any) {
   const command = new PutObjectCommand(params);
   await s3Client.send(command);
   return fileNameId;
-}
-
-export async function POST(request: { formData: () => any }) {
-  try {
-    const formData = await request.formData();
-    const file = formData.get("file");
-    const imageId = formData.get("imageId");
-
-    if (!file) {
-      return NextResponse.json({ error: "File is required." }, { status: 400 });
-    }
-
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const fileName = await uploadFileToS3(buffer, file.name);
-
-    const image = await db.images.update({
-      where: {
-        id: imageId,
-      },
-      data: {
-        imageUrl: `https://uploadimgs3.s3.ap-south-1.amazonaws.com/${fileName}`,
-      },
-    });
-
-    if (!image) {
-      throw new Error("Failed to upload image");
-    }
-
-    return NextResponse.json({ success: true, fileName });
-  } catch (error) {
-    return NextResponse.json({ error });
-  }
 }
